@@ -39,11 +39,11 @@ class PyTorchTrainer:
         self.last_checkpoint_path: Optional[str] = None
         
         self._epoch: int = 0
-        self._train_loss: float = None
-        self._val_loss: float = None
+        self._train_loss: float = float('inf')
+        self._val_loss: float = float('inf')
         
-        self.best_train_loss: float = None
-        self.best_val_loss: float = None
+        self.best_train_loss: float = float('inf')
+        self.best_val_loss: float = float('inf')
         
         print(f"Trainer đã được khởi tạo trên thiết bị: {self.device}")
         
