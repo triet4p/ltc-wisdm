@@ -59,16 +59,19 @@ class PyTorchTrainer:
             m.reset_parameters()
             
     def _update_train_losses(self):
-        if (self._train_loss < self.best_train_loss and 
+        if self.best_train_loss is None:
+            self.best_train_loss = self._train_loss
+        elif (self._train_loss < self.best_train_loss and 
             self.best_train_loss is not None and
-            self._train_loss is not None) or self.best_train_loss is None:
+            self._train_loss is not None):
             self.best_train_loss = self._train_loss
             
     def _update_val_losses(self):
-            
-        if (self._val_loss < self.best_val_loss and 
+        if self.best_val_loss is None:
+            self.best_val_loss = self._val_loss
+        elif (self._val_loss < self.best_val_loss and 
             self.best_val_loss is not None and
-            self._val_loss is not None) or self.best_val_loss is None:
+            self._val_loss is not None):
             self.best_val_loss = self._val_loss
         
     def reset(self):
