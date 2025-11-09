@@ -39,11 +39,11 @@ class PyTorchTrainer:
         self.last_checkpoint_path: Optional[str] = None
         
         self._epoch: int = 0
-        self._train_loss: float = float('inf')
-        self._val_loss: float = float('inf')
-        
-        self.best_train_loss: float = float('inf')
-        self.best_val_loss: float = float('inf')
+        self._history = {
+            "train_loss": [], "train_acc": [],
+            "val_loss": [], "val_acc": [],
+            "lr": []
+        }
         
         print(f"Trainer đã được khởi tạo trên thiết bị: {self.device}")
         
@@ -57,22 +57,6 @@ class PyTorchTrainer:
         """Hàm helper để reset trọng số của một layer nếu có thể."""
         if hasattr(m, 'reset_parameters'):
             m.reset_parameters()
-            
-    def _update_train_losses(self):
-        if self.best_train_loss is None:
-            self.best_train_loss = self._train_loss
-        elif (self._train_loss < self.best_train_loss and 
-            self.best_train_loss is not None and
-            self._train_loss is not None):
-            self.best_train_loss = self._train_loss
-            
-    def _update_val_losses(self):
-        if self.best_val_loss is None:
-            self.best_val_loss = self._val_loss
-        elif (self._val_loss < self.best_val_loss and 
-            self.best_val_loss is not None and
-            self._val_loss is not None):
-            self.best_val_loss = self._val_loss
         
     def reset(self):
         self._epoch = 0
@@ -80,8 +64,8 @@ class PyTorchTrainer:
         self._val_loss = None
         self.best_checkpoint_path = None
         self.last_checkpoint_path = None
-        self.best_train_loss = None
-        self.best_val_loss = None
+        for k, v in self._history.items():
+            self._history[k].clear()
         
         self._reset_model_weights()
         self.optimizer.state.clear()
@@ -154,7 +138,7 @@ class PyTorchTrainer:
         avg_acc = correct_predictions / total_samples
         return avg_loss, avg_acc
 
-    def save_checkpoint(self, dir_path: str, filename: str, epoch: int, val_loss: float):
+    def save_checkpoint(self, dir_path: str, filename: str, epoch: int):
         """Lưu checkpoint, bao gồm trạng thái của model, optimizer, và scheduler."""
         os.makedirs(dir_path, exist_ok=True)
         checkpoint_path = os.path.join(dir_path, filename)
@@ -163,7 +147,7 @@ class PyTorchTrainer:
             'epoch': epoch,
             'model_state_dict': self.model.state_dict(),
             'optimizer_state_dict': self.optimizer.state_dict(),
-            'val_loss': val_loss,
+            'history': self._history,
         }
         if self.lr_scheduler:
             state['scheduler_state_dict'] = self.lr_scheduler.state_dict()
@@ -171,8 +155,7 @@ class PyTorchTrainer:
         torch.save(state, checkpoint_path)
         print(f"Checkpoint đã được lưu tại: {checkpoint_path}")
 
-    @classmethod
-    def load_model(cls, checkpoint_path: str, model: nn.Module, optimizer: Optional[torch.optim.Optimizer] = None, 
+    def load_model(self, checkpoint_path: str, model: nn.Module, optimizer: Optional[torch.optim.Optimizer] = None, 
                    lr_scheduler: Optional[torch.optim.lr_scheduler._LRScheduler] = None, device: torch.device = None):
         """
         Class method để load một checkpoint đầy đủ.
@@ -195,12 +178,11 @@ class PyTorchTrainer:
             lr_scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
             
         epoch = checkpoint.get('epoch', 0)
-        val_loss = checkpoint.get('val_loss', float('inf'))
+        history = checkpoint.get('history', {})
         
         print(f"Model đã được load từ checkpoint: {checkpoint_path}")
-        print(f"Epoch: {epoch}, Validation Loss: {val_loss:.4f}")
         
-        return model, optimizer, lr_scheduler, epoch, val_loss
+        return model, optimizer, lr_scheduler, epoch, history
 
 
     def fit(self, 
@@ -219,11 +201,7 @@ class PyTorchTrainer:
             checkpoint_dir (str, optional): Thư mục để lưu checkpoints. Nếu None, không lưu. Defaults to None.
             reload_best_checkpoint (bool): Nếu True, load lại checkpoint tốt nhất sau khi huấn luyện xong. Defaults to True.
         """
-        history = {
-            "train_loss": [], "train_acc": [],
-            "val_loss": [], "val_acc": [],
-            "lr": []
-        }
+        history = self._history.copy()
         best_val_loss = float('inf')
 
         print(f"Bắt đầu huấn luyện cho {num_epochs} epochs...")
@@ -244,12 +222,8 @@ class PyTorchTrainer:
             history["train_loss"].append(train_loss)
             history["train_acc"].append(train_acc)
             history["val_loss"].append(val_loss)
+            history['val_acc'].append(val_acc)
             history["lr"].append(self.optimizer.param_groups[0]['lr'])
-            
-            self._train_loss = train_loss
-            self._update_train_losses()
-            self._val_loss = val_loss
-            self._update_val_losses()
 
             print(
                 f"Epoch {epoch}/{num_epochs} | "
@@ -269,7 +243,7 @@ class PyTorchTrainer:
                 if val_loss < best_val_loss:
                     print(f"Validation loss cải thiện ({best_val_loss:.4f} --> {val_loss:.4f}). Đang lưu model tốt nhất...")
                     best_val_loss = val_loss
-                    self.save_checkpoint(checkpoint_dir, "best_checkpoint.pth", epoch, val_loss)
+                    self.save_checkpoint(checkpoint_dir, "best_checkpoint.pth", epoch, history)
                     self.best_checkpoint_path = os.path.join(checkpoint_dir, "best_checkpoint.pth")
 
         print("--- Hoàn thành huấn luyện! ---")
@@ -278,5 +252,7 @@ class PyTorchTrainer:
         if reload_best_checkpoint and self.best_checkpoint_path:
             print("Đang load lại trọng số từ checkpoint tốt nhất...")
             self.load_model(self.best_checkpoint_path, self.model)
+            
+        self._history = history
         
         return history
