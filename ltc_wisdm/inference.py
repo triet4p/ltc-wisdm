@@ -11,31 +11,31 @@ from typing import Dict, Any, List
 
 class PyTorchInferencer:
     """
-    Một lớp Inferencer có thể tái sử dụng để đánh giá các mô hình PyTorch.
+    A reusable Inferencer class for evaluating PyTorch models.
     """
     def __init__(self, model: nn.Module, device: torch.device = None):
         """
-        Khởi tạo PyTorchInferencer.
+        Initialize PyTorchInferencer.
 
         Args:
-            model (nn.Module): Mô hình PyTorch đã được huấn luyện.
-            device (torch.device, optional): Thiết bị để chạy inference. Tự động phát hiện nếu None.
+            model (nn.Module): Trained PyTorch model.
+            device (torch.device, optional): Device to run inference on. Automatically detected if None.
         """
         self.model = model
         self.device = device if device else torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.model.to(self.device)
         self.model.eval()
-        print(f"Inferencer đã được khởi tạo trên thiết bị: {self.device}")
+        print(f"Inferencer initialized on device: {self.device}")
 
     def predict(self, data_loader: DataLoader) -> tuple[np.ndarray, np.ndarray]:
         """
-        Lấy các dự đoán (logits) và nhãn thật từ DataLoader.
+        Get predictions (logits) and true labels from DataLoader.
 
         Args:
-            data_loader (DataLoader): DataLoader chứa dữ liệu cần dự đoán.
+            data_loader (DataLoader): DataLoader containing data to predict.
 
         Returns:
-            tuple[np.ndarray, np.ndarray]: Một tuple chứa (y_preds_raw, y_true).
+            tuple[np.ndarray, np.ndarray]: A tuple containing (y_preds_raw, y_true).
         """
         all_preds = []
         all_labels = []
@@ -54,32 +54,32 @@ class PyTorchInferencer:
 
     def evaluate(self, data_loader: DataLoader, metrics_dict: Dict[str, callable]) -> Dict[str, Any]:
         """
-        API chính để đánh giá toàn diện mô hình.
+        Main API for comprehensive model evaluation.
 
         Args:
-            data_loader (DataLoader): DataLoader chứa dữ liệu kiểm tra.
-            metrics_dict (Dict[str, callable]): Một dictionary chứa tên metric và hàm tính toán tương ứng.
-                                                Ví dụ: {"f1_score": f1_score}
+            data_loader (DataLoader): DataLoader containing test data.
+            metrics_dict (Dict[str, callable]): A dictionary containing metric names and corresponding calculation functions.
+                                                Example: {"f1_score": f1_score}
 
         Returns:
-            Dict[str, Any]: Một dictionary chứa kết quả của các metrics và confusion matrix.
+            Dict[str, Any]: A dictionary containing metric results and confusion matrix.
         """
         y_preds_raw, y_true = self.predict(data_loader)
         y_pred_classes = np.argmax(y_preds_raw, axis=1)
         
         report = {}
-        # Tính toán các metrics được yêu cầu
+        # Calculate requested metrics
         for metric_name, metric_func in metrics_dict.items():
             try:
-                # Một số hàm metric cần các tham số đặc biệt (ví dụ: average)
+                # Some metric functions require special parameters (e.g., average)
                 if "f1" in metric_name or "precision" in metric_name or "recall" in metric_name:
                     report[metric_name] = metric_func(y_true, y_pred_classes, average='weighted')
                 else:
                     report[metric_name] = metric_func(y_true, y_pred_classes)
             except Exception as e:
-                print(f"Lỗi khi tính toán metric '{metric_name}': {e}")
+                print(f"Error calculating metric '{metric_name}': {e}")
         
-        # Luôn tính toán confusion matrix
+        # Always calculate confusion matrix
         cm = confusion_matrix(y_true, y_pred_classes)
         report['confusion_matrix'] = cm
         report['accuracy'] = accuracy_score(y_true, y_pred_classes)
@@ -97,7 +97,7 @@ class PyTorchInferencer:
         title: str = 'Confusion Matrix',
         figsize: tuple = (10, 8)
     ):
-        """Vẽ confusion matrix một cách đẹp mắt."""
+        """Plot confusion matrix in a nice way."""
         plt.figure(figsize=figsize)
         sns.heatmap(
             cm,
@@ -108,6 +108,6 @@ class PyTorchInferencer:
             yticklabels=class_names
         )
         plt.title(title)
-        plt.ylabel('Nhãn thật (True Label)')
-        plt.xlabel('Nhãn dự đoán (Predicted Label)')
+        plt.ylabel('True Label')
+        plt.xlabel('Predicted Label')
         plt.show()

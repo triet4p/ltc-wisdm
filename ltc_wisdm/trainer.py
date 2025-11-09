@@ -9,10 +9,10 @@ from typing import Dict, Any, List, Literal, Optional, Type
 
 class PyTorchTrainer:
     """
-    Một lớp Trainer có thể tái sử dụng cho các mô hình PyTorch.
+    A reusable Trainer class for PyTorch models.
     
-    Bao gồm vòng lặp huấn luyện, validation, LR scheduling, gradient clipping,
-    và quản lý checkpoint (lưu best & last, load).
+    Includes training loop, validation, LR scheduling, gradient clipping,
+    and checkpoint management (save best & last, load).
     """
     def __init__(
         self,
@@ -24,6 +24,18 @@ class PyTorchTrainer:
         device: torch.device = None,
         gradient_clip_val: float = None
     ):
+        """
+        Initialize the PyTorchTrainer.
+
+        Args:
+            model (nn.Module): The PyTorch model to train.
+            criterion (nn.Module): Loss function for training.
+            optimizer (torch.optim.Optimizer): Optimizer for training.
+            lr_scheduler_cls (Optional[Type[torch.optim.lr_scheduler._LRScheduler]], optional): Learning rate scheduler class. Defaults to None.
+            lr_scheduler_kwargs (Optional[Dict[str, Any]], optional): Arguments for the learning rate scheduler. Defaults to None.
+            device (torch.device, optional): Device to run training on. Defaults to CUDA if available, else CPU.
+            gradient_clip_val (float, optional): Gradient clipping value. Defaults to None.
+        """
         self.model = model
         self.criterion = criterion
         self.optimizer = optimizer
@@ -45,20 +57,24 @@ class PyTorchTrainer:
             "lr": []
         }
         
-        print(f"Trainer đã được khởi tạo trên thiết bị: {self.device}")
+        print(f"Trainer initialized on device: {self.device}")
         
     def _create_scheduler(self) -> Optional[torch.optim.lr_scheduler._LRScheduler]:
-        """Tạo một instance scheduler mới."""
+        """Create a new scheduler instance."""
         if self.lr_scheduler_cls:
             return self.lr_scheduler_cls(self.optimizer, **self.lr_scheduler_kwargs)
         return None
 
     def _reset_model_weights(self, m: nn.Module):
-        """Hàm helper để reset trọng số của một layer nếu có thể."""
+        """Helper function to reset the weights of a layer if possible."""
         if hasattr(m, 'reset_parameters'):
             m.reset_parameters()
         
     def reset(self):
+        """
+        Reset the trainer to initial state.
+        This includes epoch counter, history, and model weights.
+        """
         self._epoch = 0
         self._train_loss = None
         self._val_loss = None
@@ -74,7 +90,15 @@ class PyTorchTrainer:
         
 
     def _train_one_epoch(self, train_loader: DataLoader) -> tuple[float, float]:
-        # ... (Nội dung hàm này không thay đổi)
+        """
+        Train one epoch of the model.
+
+        Args:
+            train_loader (DataLoader): DataLoader for training data.
+
+        Returns:
+            tuple[float, float]: Average loss and accuracy for the epoch.
+        """
         self.model.train()
         total_loss = 0.0
         correct_predictions = 0
@@ -110,7 +134,15 @@ class PyTorchTrainer:
         return avg_loss, avg_acc
 
     def _validate_one_epoch(self, val_loader: DataLoader) -> tuple[float, float]:
-        # ... (Nội dung hàm này không thay đổi)
+        """
+        Validate one epoch of the model.
+
+        Args:
+            val_loader (DataLoader): DataLoader for validation data.
+
+        Returns:
+            tuple[float, float]: Average loss and accuracy for the epoch.
+        """
         self.model.eval()
         total_loss = 0.0
         correct_predictions = 0
@@ -139,7 +171,7 @@ class PyTorchTrainer:
         return avg_loss, avg_acc
 
     def save_checkpoint(self, dir_path: str, filename: str, epoch: int):
-        """Lưu checkpoint, bao gồm trạng thái của model, optimizer, và scheduler."""
+        """Save checkpoint, including the state of model, optimizer, and scheduler."""
         os.makedirs(dir_path, exist_ok=True)
         checkpoint_path = os.path.join(dir_path, filename)
         
@@ -153,16 +185,26 @@ class PyTorchTrainer:
             state['scheduler_state_dict'] = self.lr_scheduler.state_dict()
             
         torch.save(state, checkpoint_path)
-        print(f"Checkpoint đã được lưu tại: {checkpoint_path}")
+        print(f"Checkpoint saved at: {checkpoint_path}")
 
     def load_model(self, checkpoint_path: str, model: nn.Module, optimizer: Optional[torch.optim.Optimizer] = None, 
                    lr_scheduler: Optional[torch.optim.lr_scheduler._LRScheduler] = None, device: torch.device = None):
         """
-        Class method để load một checkpoint đầy đủ.
-        Lưu ý: model, optimizer, scheduler cần được khởi tạo trước khi gọi hàm này.
+        Class method to load a full checkpoint.
+        Note: model, optimizer, scheduler need to be initialized before calling this function.
+        
+        Args:
+            checkpoint_path (str): Path to the checkpoint file.
+            model (nn.Module): Model to load the state into.
+            optimizer (Optional[torch.optim.Optimizer]): Optimizer to load the state into. Defaults to None.
+            lr_scheduler (Optional[torch.optim.lr_scheduler._LRScheduler]): Learning rate scheduler to load the state into. Defaults to None.
+            device (torch.device): Device to load the model onto. Defaults to CUDA if available, else CPU.
+
+        Returns:
+            tuple: A tuple containing (model, optimizer, lr_scheduler, epoch, history)
         """
         if not os.path.exists(checkpoint_path):
-            raise FileNotFoundError(f"Không tìm thấy file checkpoint: {checkpoint_path}")
+            raise FileNotFoundError(f"Checkpoint file not found: {checkpoint_path}")
         
         device = device if device else torch.device("cuda" if torch.cuda.is_available() else "cpu")
         
@@ -180,7 +222,7 @@ class PyTorchTrainer:
         epoch = checkpoint.get('epoch', 0)
         history = checkpoint.get('history', {})
         
-        print(f"Model đã được load từ checkpoint: {checkpoint_path}")
+        print(f"Model loaded from checkpoint: {checkpoint_path}")
         
         return model, optimizer, lr_scheduler, epoch, history
 
@@ -192,19 +234,22 @@ class PyTorchTrainer:
             checkpoint_dir: Optional[str] = None,
             reload_best_checkpoint: bool = True):
         """
-        API chính để bắt đầu quá trình huấn luyện.
+        Main API to start the training process.
 
         Args:
-            train_loader (DataLoader): DataLoader cho tập huấn luyện.
-            val_loader (DataLoader): DataLoader cho tập validation.
-            num_epochs (int): Số lượng epoch để huấn luyện.
-            checkpoint_dir (str, optional): Thư mục để lưu checkpoints. Nếu None, không lưu. Defaults to None.
-            reload_best_checkpoint (bool): Nếu True, load lại checkpoint tốt nhất sau khi huấn luyện xong. Defaults to True.
+            train_loader (DataLoader): DataLoader for training data.
+            val_loader (DataLoader): DataLoader for validation data.
+            num_epochs (int): Number of epochs to train.
+            checkpoint_dir (str, optional): Directory to save checkpoints. If None, no saving. Defaults to None.
+            reload_best_checkpoint (bool): If True, reload the best checkpoint after training. Defaults to True.
+
+        Returns:
+            dict: Training history containing metrics per epoch.
         """
         history = self._history.copy()
         best_val_loss = float('inf')
 
-        print(f"Bắt đầu huấn luyện cho {num_epochs} epochs...")
+        print(f"Starting training for {num_epochs} epochs...")
         for epoch in range(1, num_epochs + 1):
             start_time = time.time()
             
@@ -233,24 +278,24 @@ class PyTorchTrainer:
                 f"LR: {self.optimizer.param_groups[0]['lr']:.6f}"
             )
 
-            # --- Quản lý Checkpoint ---
+            # --- Checkpoint Management ---
             if checkpoint_dir:
-                # 1. Lưu last checkpoint
+                # 1. Save last checkpoint
                 self.save_checkpoint(checkpoint_dir, "last_checkpoint.pth", epoch, val_loss)
                 self.last_checkpoint_path = os.path.join(checkpoint_dir, "last_checkpoint.pth")
                 
-                # 2. Lưu best checkpoint
+                # 2. Save best checkpoint
                 if val_loss < best_val_loss:
-                    print(f"Validation loss cải thiện ({best_val_loss:.4f} --> {val_loss:.4f}). Đang lưu model tốt nhất...")
+                    print(f"Validation loss improved ({best_val_loss:.4f} --> {val_loss:.4f}). Saving best model...")
                     best_val_loss = val_loss
                     self.save_checkpoint(checkpoint_dir, "best_checkpoint.pth", epoch, history)
                     self.best_checkpoint_path = os.path.join(checkpoint_dir, "best_checkpoint.pth")
 
-        print("--- Hoàn thành huấn luyện! ---")
+        print("--- Training completed! ---")
 
-        # --- Load lại checkpoint tốt nhất (optional) ---
+        # --- Load best checkpoint (optional) ---
         if reload_best_checkpoint and self.best_checkpoint_path:
-            print("Đang load lại trọng số từ checkpoint tốt nhất...")
+            print("Loading weights from best checkpoint...")
             self.load_model(self.best_checkpoint_path, self.model)
             
         self._history = history

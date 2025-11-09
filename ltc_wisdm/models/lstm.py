@@ -5,26 +5,26 @@ import torch.nn as nn
 
 class LSTMModel(nn.Module):
     """
-    Mô hình LSTM cho bài toán phân loại chuỗi (Sequence Classification).
+    LSTM model for sequence classification.
     """
     def __init__(self, input_dim: int, hidden_dim: int, num_classes: int, num_layers: int = 1, dropout: float = 0.2):
         """
-        Khởi tạo kiến trúc LSTM.
+        Initialize LSTM architecture.
 
         Args:
-            input_dim (int): Số lượng features đầu vào tại mỗi bước thời gian (số trục cảm biến).
-            hidden_dim (int): Kích thước của trạng thái ẩn.
-            num_classes (int): Số lượng lớp đầu ra (số loại hoạt động).
-            num_layers (int, optional): Số lượng lớp LSTM xếp chồng. Defaults to 1.
-            dropout (float, optional): Tỷ lệ dropout giữa các lớp LSTM (nếu num_layers > 1). Defaults to 0.2.
+            input_dim (int): Number of input features at each time step (number of sensor axes).
+            hidden_dim (int): Size of hidden state.
+            num_classes (int): Number of output classes (number of activities).
+            num_layers (int, optional): Number of stacked LSTM layers. Defaults to 1.
+            dropout (float, optional): Dropout rate between LSTM layers (if num_layers > 1). Defaults to 0.2.
         """
         super(LSTMModel, self).__init__()
         self.hidden_dim = hidden_dim
         self.num_layers = num_layers
         
-        # Lớp LSTM:
-        # - batch_first=True: Yêu cầu input có shape (batch, seq_len, features)
-        # - dropout: Áp dụng dropout giữa các lớp LSTM nếu có nhiều hơn 1 lớp
+        # LSTM layer:
+        # - batch_first=True: Requires input with shape (batch, seq_len, features)
+        # - dropout: Applies dropout between LSTM layers if more than 1 layer
         self.lstm = nn.LSTM(
             input_size=input_dim,
             hidden_size=hidden_dim,
@@ -33,37 +33,37 @@ class LSTMModel(nn.Module):
             dropout=dropout if num_layers > 1 else 0
         )
         
-        # Lớp Fully Connected cuối cùng để phân loại:
-        # Nhận đầu vào là trạng thái ẩn cuối cùng của LSTM và đưa ra logits cho các lớp.
+        # Final fully connected layer for classification:
+        # Takes the final hidden state of the LSTM as input and outputs logits for classes.
         self.fc = nn.Linear(hidden_dim, num_classes)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
-        Forward pass của mô hình.
+        Forward pass of the model.
 
         Args:
-            x (torch.Tensor): Tensor đầu vào có shape (batch_size, sequence_length, input_dim).
+            x (torch.Tensor): Input tensor with shape (batch_size, sequence_length, input_dim).
 
         Returns:
-            torch.Tensor: Logits đầu ra có shape (batch_size, num_classes).
+            torch.Tensor: Output logits with shape (batch_size, num_classes).
         """
-        # Khởi tạo trạng thái ẩn và cell state ban đầu bằng zero
+        # Initialize hidden state and cell state with zeros
         # h0 shape: (num_layers, batch_size, hidden_dim)
         # c0 shape: (num_layers, batch_size, hidden_dim)
         h0 = torch.zeros(self.num_layers, x.size(0), self.hidden_dim).to(x.device)
         c0 = torch.zeros(self.num_layers, x.size(0), self.hidden_dim).to(x.device)
         
-        # Cho dữ liệu đi qua LSTM
+        # Pass data through LSTM
         # lstm_out shape: (batch_size, sequence_length, hidden_dim)
         # h_n shape: (num_layers, batch_size, hidden_dim)
         # c_n shape: (num_layers, batch_size, hidden_dim)
         lstm_out, (h_n, c_n) = self.lstm(x, (h0, c0))
         
-        # Chúng ta chỉ cần trạng thái ẩn cuối cùng của lớp LSTM trên cùng để phân loại.
-        # h_n[-1] sẽ lấy ra trạng thái ẩn của lớp cuối cùng, shape: (batch_size, hidden_dim)
+        # We only need the final hidden state of the top LSTM layer for classification.
+        # h_n[-1] will extract the hidden state of the last layer, shape: (batch_size, hidden_dim)
         last_hidden_state = h_n[-1]
         
-        # Đưa trạng thái ẩn cuối cùng qua lớp fully connected
+        # Pass the final hidden state through the fully connected layer
         out = self.fc(last_hidden_state)
         
         return out
