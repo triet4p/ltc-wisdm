@@ -1,5 +1,6 @@
 # src/inference.py
 
+from sklearn.calibration import label_binarize
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
@@ -7,7 +8,7 @@ import numpy as np
 from sklearn.metrics import confusion_matrix, accuracy_score, f1_score, roc_auc_score
 import seaborn as sns
 import matplotlib.pyplot as plt
-from typing import Dict, Any, List
+from typing import Callable, Dict, Any, List
 
 class PyTorchInferencer:
     """
@@ -52,41 +53,63 @@ class PyTorchInferencer:
         
         return np.concatenate(all_preds), np.concatenate(all_labels)
 
-    def evaluate(self, data_loader: DataLoader, metrics_dict: Dict[str, callable]) -> Dict[str, Any]:
+    def evaluate(
+        self, 
+        data_loader: DataLoader, 
+        label_metrics_dict: Dict[str, Callable] = None,
+        prob_metrics_dict: Dict[str, Callable] = None
+    ) -> Dict[str, Any]:
         """
         Main API for comprehensive model evaluation.
 
         Args:
-            data_loader (DataLoader): DataLoader containing test data.
-            metrics_dict (Dict[str, callable]): A dictionary containing metric names and corresponding calculation functions.
-                                                Example: {"f1_score": f1_score}
+            data_loader (DataLoader): DataLoader containing the evaluation data.
+            label_metrics_dict (Dict[str, Callable], optional): 
+                Dictionary of metrics that operate on predicted class labels (e.g., accuracy, f1_score).
+                The functions should accept (y_true, y_pred).
+            prob_metrics_dict (Dict[str, Callable], optional): 
+                Dictionary of metrics that operate on class probabilities (e.g., roc_auc_score).
+                The functions should accept (y_true_binarized, y_pred_proba).
 
         Returns:
-            Dict[str, Any]: A dictionary containing metric results and confusion matrix.
+            Dict[str, Any]: A dictionary containing metric results and the confusion matrix.
         """
+        label_metrics_dict = label_metrics_dict or {}
+        prob_metrics_dict = prob_metrics_dict or {}
+        
         y_preds_raw, y_true = self.predict(data_loader)
         y_pred_classes = np.argmax(y_preds_raw, axis=1)
         
         report = {}
-        # Calculate requested metrics
-        for metric_name, metric_func in metrics_dict.items():
+        
+        # --- Calculate label-based metrics ---
+        for metric_name, metric_func in label_metrics_dict.items():
             try:
-                # Some metric functions require special parameters (e.g., average)
-                if "f1" in metric_name or "precision" in metric_name or "recall" in metric_name:
-                    report[metric_name] = metric_func(y_true, y_pred_classes, average='weighted')
-                else:
-                    report[metric_name] = metric_func(y_true, y_pred_classes)
+                report[metric_name] = metric_func(y_true, y_pred_classes)
             except Exception as e:
-                print(f"Error calculating metric '{metric_name}': {e}")
+                print(f"Error calculating label metric '{metric_name}': {e}")
+        
+        # --- Calculate probability-based metrics ---
+        if prob_metrics_dict:
+            # This part only runs if needed
+            num_classes = y_preds_raw.shape[1]
+            y_true_binarized = label_binarize(y_true, classes=range(num_classes))
+            y_pred_proba = torch.softmax(torch.tensor(y_preds_raw), dim=1).numpy()
+            
+            for metric_name, metric_func in prob_metrics_dict.items():
+                try:
+                    # For multi-class ROC AUC, ensure y_true_binarized has same shape as y_pred_proba
+                    # This handles the binary case where label_binarize might return a 1D array
+                    if y_true_binarized.shape[1] == 1 and num_classes > 2:
+                         y_true_binarized = label_binarize(y_true, classes=range(num_classes))
+
+                    report[metric_name] = metric_func(y_true_binarized, y_pred_proba)
+                except Exception as e:
+                    print(f"Error calculating probability metric '{metric_name}': {e}")
         
         # Always calculate confusion matrix
         cm = confusion_matrix(y_true, y_pred_classes)
         report['confusion_matrix'] = cm
-        report['accuracy'] = accuracy_score(y_true, y_pred_classes)
-        report['f1_score'] = {k: f1_score(y_true, y_pred_classes, average=k)
-                              for k in ['micro', 'macro', 'weighted']}
-        report['roc'] = {k: roc_auc_score(y_true, y_pred_classes, average=k)
-                         for k in ['micro', 'macro', 'weighted']}
         
         return report
 
