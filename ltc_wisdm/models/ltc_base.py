@@ -5,9 +5,6 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torchdiffeq import odeint
 
-# Minimum time-constant
-TC = 1e-2
-
 class LTCCell(nn.Module):
     """
     An upgraded Liquid Time-Constant (LTC) cell.
@@ -18,7 +15,7 @@ class LTCCell(nn.Module):
     
     It is designed to be used with an ODE solver like torchdiffeq.
     """
-    def __init__(self, input_dim: int, hidden_dim: int):
+    def __init__(self, input_dim: int, hidden_dim: int, tc: float):
         super(LTCCell, self).__init__()
         self.input_dim = input_dim
         self.hidden_dim = hidden_dim
@@ -30,6 +27,8 @@ class LTCCell(nn.Module):
         
         # A separate Linear layer to compute the adaptive time-constant `tau`.
         self.tau_linear = nn.Linear(hidden_dim, hidden_dim)
+        
+        self.tc = tc
 
     def forward(self, t: float, h: torch.Tensor, x_t: torch.Tensor) -> torch.Tensor:
         """
@@ -58,7 +57,7 @@ class LTCCell(nn.Module):
         
         # 5. Compute the adaptive time-constant `tau`
         # Using softplus to ensure tau is always positive
-        tau = F.softplus(self.tau_linear(h)) + TC
+        tau = F.softplus(self.tau_linear(h)) + self.tc
         
         # 6. Apply the gated differential equation
         # dh/dt = (gate * dynamics - h) / tau
@@ -82,7 +81,11 @@ class LTCModel(nn.Module):
     
     This model uses an ODE solver (`torchdiffeq`) to process sequences step-by-step.
     """
-    def __init__(self, input_dim: int, hidden_dim: int, num_classes: int, solver: str = 'rk4', use_adjoint: bool = False):
+    def __init__(self, input_dim: int, hidden_dim: int, 
+                 num_classes: int, 
+                 tc: float,
+                 solver: str = 'rk4', 
+                 use_adjoint: bool = False,):
         """
         Initializes the LTC model architecture.
 
@@ -97,7 +100,7 @@ class LTCModel(nn.Module):
         self.hidden_dim = hidden_dim
         self.num_classes = num_classes
         
-        self.cell = LTCCell(input_dim, hidden_dim)
+        self.cell = LTCCell(input_dim, hidden_dim, tc)
         self.fc = nn.Linear(hidden_dim, num_classes)
         
         self.solver = solver
