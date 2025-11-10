@@ -281,14 +281,14 @@ class PyTorchTrainer:
             # --- Checkpoint Management ---
             if checkpoint_dir:
                 # 1. Save last checkpoint
-                self.save_checkpoint(checkpoint_dir, "last_checkpoint.pth", epoch, val_loss)
+                self.save_checkpoint(checkpoint_dir, "last_checkpoint.pth", epoch)
                 self.last_checkpoint_path = os.path.join(checkpoint_dir, "last_checkpoint.pth")
                 
                 # 2. Save best checkpoint
                 if val_loss < best_val_loss:
                     print(f"Validation loss improved ({best_val_loss:.4f} --> {val_loss:.4f}). Saving best model...")
                     best_val_loss = val_loss
-                    self.save_checkpoint(checkpoint_dir, "best_checkpoint.pth", epoch, history)
+                    self.save_checkpoint(checkpoint_dir, "best_checkpoint.pth", epoch)
                     self.best_checkpoint_path = os.path.join(checkpoint_dir, "best_checkpoint.pth")
 
         print("--- Training completed! ---")
