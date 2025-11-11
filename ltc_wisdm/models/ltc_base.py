@@ -16,70 +16,70 @@ class LTCCell(nn.Module):
     
     It is designed to be used with an ODE solver like torchdiffeq.
     """
-    def __init__(self, input_dim: int, hidden_dim: int, tc: float, debug: bool = True):
+    def __init__(self, input_dim: int, hidden_dim: int):
         super(LTCCell, self).__init__()
         self.input_dim = input_dim
         self.hidden_dim = hidden_dim
-        
-        # A single, larger Linear layer to compute gates and dynamics together.
-        # Input is a concatenation of [x_t, h_t], so size = (input_dim + hidden_dim)
-        # Output provides for both the gate and the dynamics, so size = (2 * hidden_dim)
-        self.gates_and_dynamics = nn.Linear(input_dim, 2 * hidden_dim)
-        
-        # A separate Linear layer to compute the adaptive time-constant `tau`.
-        self.tau_linear = nn.Linear(input_dim, hidden_dim)
-        
-        self.tc = tc
-        self.debug = debug
-        
-    def _print_debug(self, x):
-        if self.debug:
-            print(x)
+
+        # Core layers for dynamics
+        self.gates_and_dynamics = nn.Linear(input_dim + hidden_dim, 2 * hidden_dim)
+        self.tau_linear = nn.Linear(hidden_dim, hidden_dim)
+
+        # ==========================================================
+        # <<< STABILITY MECHANISM 1: Stabilizing Parameters >>>
+        # Introduce gleak and cm as learnable parameters, inspired by ncps.
+        # These will stabilize the denominator of the ODE.
+        # ==========================================================
+        self.gleak = nn.Parameter(torch.Tensor(hidden_dim))
+        self.cm = nn.Parameter(torch.Tensor(hidden_dim))
+
+        self.init_parameters()
+
+    def init_parameters(self):
+        """
+        Apply constrained initialization to all parameters.
+        """
+        # ==========================================================
+        # <<< STABILITY MECHANISM 2: Constrained Initialization >>>
+        # Initialize weights and biases in small, controlled ranges.
+        # ==========================================================
+        with torch.no_grad():
+            # For main dynamics layer
+            torch.nn.init.uniform_(self.gates_and_dynamics.weight, -0.1, 0.1)
+            torch.nn.init.uniform_(self.gates_and_dynamics.bias, -0.1, 0.1)
+            # For tau layer
+            torch.nn.init.uniform_(self.tau_linear.weight, -0.1, 0.1)
+            torch.nn.init.uniform_(self.tau_linear.bias, -0.1, 0.1)
+            # For stabilizing parameters (inspired by ncps init_ranges)
+            torch.nn.init.uniform_(self.gleak, 0.001, 1.0)
+            torch.nn.init.uniform_(self.cm, 0.4, 0.6)
 
     def forward(self, t: float, h: torch.Tensor, x_t: torch.Tensor) -> torch.Tensor:
         """
-        Defines the differential equation dh/dt = f(h, x, t).
-
-        Args:
-            t (float): Current time (required by odeint, but not used in this simple case).
-            h (torch.Tensor): Current hidden state of shape (batch_size, hidden_dim).
-            x_t (torch.Tensor): Input at the current time step of shape (batch_size, input_dim).
-
-        Returns:
-            torch.Tensor: The derivative of the hidden state (dh/dt) of shape (batch_size, hidden_dim).
+        Defines the stabilized differential equation dh/dt.
         """
-        if not torch.isfinite(h).all():
-            self._print_debug(f"!!! DETECTED NaN/Inf IN INPUT 'h' TO THE CELL !!!")
-            # Trả về zero grad để dừng vòng lặp một cách an toàn
-            return torch.zeros_like(h)
-        
-        # 1. Concatenate input and hidden state
-        g_d_combined = self.gates_and_dynamics(x_t)
+        combined = torch.cat([x_t, h], dim=1)
+        g_d_combined = self.gates_and_dynamics(combined)
         gate, dynamics = torch.chunk(g_d_combined, 2, dim=1)
-        
         sigmoid_gate = torch.sigmoid(gate)
         tanh_dynamics = torch.tanh(dynamics)
         
-        tau = F.softplus(self.tau_linear(x_t)) + self.tc
+        # Original tau calculation (dependent on h)
+        tau = F.softplus(self.tau_linear(h))
         
-        if random.random() < 0.1:
-            self._print_debug(f"h norm: {h.norm().item():.2f} | "
-                   f"tau_min: {tau.min().item():.4f} | "
-                   f"tau_mean: {tau.mean().item():.4f}")
+        # ==========================================================
+        # <<< STABILITY MECHANISM: Stabilized ODE >>>
+        # The numerator remains the same, representing the driving force.
+        # The denominator is now stabilized by `cm` and `gleak`.
+        # We use softplus to ensure they are always positive at runtime.
+        # ==========================================================
+        numerator = sigmoid_gate * tanh_dynamics - h
+        denominator = tau + F.softplus(self.cm) + F.softplus(self.gleak)
         
-        # 6. Apply the gated differential equation
-        # dh/dt = (gate * dynamics - h) / tau
-        dhdt = (sigmoid_gate * tanh_dynamics - h) / tau
-        if not torch.isfinite(dhdt).all():
-            self._print_debug(f"!!! NaN/Inf DETECTED IN 'dhdt' OUTPUT !!!")
-            self._print_debug(f"  - sigmoid_gate norm: {sigmoid_gate.norm().item():.2f}")
-            self._print_debug(f"  - tanh_dynamics norm: {tanh_dynamics.norm().item():.2f}")
-            self._print_debug(f"  - h norm: {h.norm().item():.2f}")
-            self._print_debug(f"  - tau min: {tau.min().item():.4f}, tau mean: {tau.mean().item():.4f}")
-            # Trả về zero grad để dừng lại
-            return torch.zeros_like(h)
+        dhdt = numerator / (denominator + 1e-6) # Add epsilon for safety
         
         return dhdt
+
 
 class ODEFunc(nn.Module):
     """A helper class to wrap the LTCCell for the ODE solver."""
@@ -117,7 +117,7 @@ class LTCModel(nn.Module):
         self.hidden_dim = hidden_dim
         self.num_classes = num_classes
         
-        self.cell = LTCCell(input_dim, hidden_dim, tc, debug)
+        self.cell = LTCCell(input_dim, hidden_dim, tc)
         self.fc = nn.Linear(hidden_dim, num_classes)
         
         self.solver = solver
