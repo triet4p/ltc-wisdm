@@ -15,7 +15,7 @@ class LTCCell(nn.Module):
     
     It is designed to be used with an ODE solver like torchdiffeq.
     """
-    def __init__(self, input_dim: int, hidden_dim: int, tc: float):
+    def __init__(self, input_dim: int, hidden_dim: int, tc: float, debug: bool = True):
         super(LTCCell, self).__init__()
         self.input_dim = input_dim
         self.hidden_dim = hidden_dim
@@ -29,6 +29,11 @@ class LTCCell(nn.Module):
         self.tau_linear = nn.Linear(hidden_dim, hidden_dim)
         
         self.tc = tc
+        self.debug = debug
+        
+    def _print_debug(self, x):
+        if self.debug:
+            print(x)
 
     def forward(self, t: float, h: torch.Tensor, x_t: torch.Tensor) -> torch.Tensor:
         """
@@ -42,6 +47,11 @@ class LTCCell(nn.Module):
         Returns:
             torch.Tensor: The derivative of the hidden state (dh/dt) of shape (batch_size, hidden_dim).
         """
+        if not torch.isfinite(h).all():
+            self._print_debug(f"!!! DETECTED NaN/Inf IN INPUT 'h' TO THE CELL !!!")
+            # Trả về zero grad để dừng vòng lặp một cách an toàn
+            return torch.zeros_like(h)
+        
         # 1. Concatenate input and hidden state
         combined = torch.cat([x_t, h], dim=1)
         
@@ -59,9 +69,22 @@ class LTCCell(nn.Module):
         # Using softplus to ensure tau is always positive
         tau = F.softplus(self.tau_linear(h)) + self.tc
         
+        if torch.randint(0, 100, (1,)).item() == 0:
+            self._print_debug(f"h norm: {h.norm().item():.2f} | "
+                   f"tau_min: {tau.min().item():.4f} | "
+                   f"tau_mean: {tau.mean().item():.4f}")
+        
         # 6. Apply the gated differential equation
         # dh/dt = (gate * dynamics - h) / tau
         dhdt = (sigmoid_gate * tanh_dynamics - h) / tau
+        if not torch.isfinite(dhdt).all():
+            self._print_debug(f"!!! NaN/Inf DETECTED IN 'dhdt' OUTPUT !!!")
+            self._print_debug(f"  - sigmoid_gate norm: {sigmoid_gate.norm().item():.2f}")
+            self._print_debug(f"  - tanh_dynamics norm: {tanh_dynamics.norm().item():.2f}")
+            self._print_debug(f"  - h norm: {h.norm().item():.2f}")
+            self._print_debug(f"  - tau min: {tau.min().item():.4f}, tau mean: {tau.mean().item():.4f}")
+            # Trả về zero grad để dừng lại
+            return torch.zeros_like(h)
         
         return dhdt
 
@@ -85,7 +108,8 @@ class LTCModel(nn.Module):
                  num_classes: int, 
                  tc: float,
                  solver: str = 'rk4', 
-                 use_adjoint: bool = False,):
+                 use_adjoint: bool = False,
+                 debug: bool = True):
         """
         Initializes the LTC model architecture.
 
@@ -100,7 +124,7 @@ class LTCModel(nn.Module):
         self.hidden_dim = hidden_dim
         self.num_classes = num_classes
         
-        self.cell = LTCCell(input_dim, hidden_dim, tc)
+        self.cell = LTCCell(input_dim, hidden_dim, tc, debug)
         self.fc = nn.Linear(hidden_dim, num_classes)
         
         self.solver = solver
