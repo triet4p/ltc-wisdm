@@ -1,5 +1,6 @@
 # src/models/ltc_base.py
 
+import random
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -26,7 +27,7 @@ class LTCCell(nn.Module):
         self.gates_and_dynamics = nn.Linear(input_dim + hidden_dim, 2 * hidden_dim)
         
         # A separate Linear layer to compute the adaptive time-constant `tau`.
-        self.tau_linear = nn.Linear(hidden_dim, hidden_dim)
+        self.tau_linear = nn.Linear(input_dim, hidden_dim)
         
         self.tc = tc
         self.debug = debug
@@ -67,9 +68,9 @@ class LTCCell(nn.Module):
         
         # 5. Compute the adaptive time-constant `tau`
         # Using softplus to ensure tau is always positive
-        tau = F.softplus(self.tau_linear(h)) + self.tc
+        tau = F.softplus(self.tau_linear(x_t)) + self.tc
         
-        if torch.randint(0, 100, (1,)).item() == 0:
+        if random.random() < 0.1:
             self._print_debug(f"h norm: {h.norm().item():.2f} | "
                    f"tau_min: {tau.min().item():.4f} | "
                    f"tau_mean: {tau.mean().item():.4f}")
