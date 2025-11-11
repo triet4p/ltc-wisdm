@@ -99,7 +99,6 @@ class LTCModel(nn.Module):
     """
     def __init__(self, input_dim: int, hidden_dim: int, 
                  num_classes: int, 
-                 tc: float,
                  solver: str = 'rk4', 
                  use_adjoint: bool = False,
                  debug: bool = True):
@@ -117,7 +116,7 @@ class LTCModel(nn.Module):
         self.hidden_dim = hidden_dim
         self.num_classes = num_classes
         
-        self.cell = LTCCell(input_dim, hidden_dim, tc)
+        self.cell = LTCCell(input_dim, hidden_dim)
         self.fc = nn.Linear(hidden_dim, num_classes)
         
         self.solver = solver
