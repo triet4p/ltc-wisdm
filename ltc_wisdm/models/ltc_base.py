@@ -24,7 +24,7 @@ class LTCCell(nn.Module):
         # A single, larger Linear layer to compute gates and dynamics together.
         # Input is a concatenation of [x_t, h_t], so size = (input_dim + hidden_dim)
         # Output provides for both the gate and the dynamics, so size = (2 * hidden_dim)
-        self.gates_and_dynamics = nn.Linear(input_dim + hidden_dim, 2 * hidden_dim)
+        self.gates_and_dynamics = nn.Linear(input_dim, 2 * hidden_dim)
         
         # A separate Linear layer to compute the adaptive time-constant `tau`.
         self.tau_linear = nn.Linear(input_dim, hidden_dim)
@@ -54,20 +54,12 @@ class LTCCell(nn.Module):
             return torch.zeros_like(h)
         
         # 1. Concatenate input and hidden state
-        combined = torch.cat([x_t, h], dim=1)
-        
-        # 2. Compute gates and dynamics simultaneously
-        g_d_combined = self.gates_and_dynamics(combined)
-        
-        # 3. Split the result into two parts: gate and dynamics
+        g_d_combined = self.gates_and_dynamics(x_t)
         gate, dynamics = torch.chunk(g_d_combined, 2, dim=1)
         
-        # 4. Apply activation functions
         sigmoid_gate = torch.sigmoid(gate)
         tanh_dynamics = torch.tanh(dynamics)
         
-        # 5. Compute the adaptive time-constant `tau`
-        # Using softplus to ensure tau is always positive
         tau = F.softplus(self.tau_linear(x_t)) + self.tc
         
         if random.random() < 0.1:
