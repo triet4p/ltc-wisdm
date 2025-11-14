@@ -8,153 +8,139 @@ import joblib
 from tqdm import tqdm
 
 # --- Constants Configuration ---
-
-# 1. Path Configuration
+# (Giữ nguyên các hằng số bất đối xứng và khó)
 ROOT_DIR = Path(__file__).parent.parent
 DATA_DIR = ROOT_DIR / 'data'
 PENDULUM_DATA_DIR = DATA_DIR / 'pendulum'
 PENDULUM_PROCESSED_DIR = PENDULUM_DATA_DIR / 'processed'
 
-# 2. Physics Parameters for the Double Pendulum
-G = 9.81  # Acceleration due to gravity (m/s^2)
-L1 = 1.0  # Length of the first pendulum arm (m)
-L2 = 1.0  # Length of the second pendulum arm (m)
-M1 = 1.0  # Mass of the first bob (kg)
-M2 = 1.0  # Mass of the second bob (kg)
+G = 9.81
+L1 = 1.0
+L2 = 1.8
+M1 = 2.0
+M2 = 0.5
 
-# 3. Simulation & Data Generation Parameters
-NUM_TRAJECTORIES = 50      # Generate 50 different simulations
-T_MAX = 100.0              # Simulate for 100 seconds
-MIN_DT = 0.05              # Minimum time step for irregular sampling
-MAX_DT = 0.5               # Maximum time step (10x min), creating significant irregularity
+NUM_TRAJECTORIES = 150
+T_MAX = 100.0
+MIN_DT = 0.05
+MAX_DT = 1.5
 
-# 4. Machine Learning Parameters
-SEQUENCE_LENGTH = 25       # Number of past steps to use for prediction
-OUTPUT_DIM = 4             # The state vector: [theta1, omega1, theta2, omega2]
+SEQUENCE_LENGTH = 15
+OUTPUT_DIM = 4
+PREDICTION_HORIZON = 1.5
 
 def double_pendulum_ode(t, y):
-    """
-    Defines the differential equations for the double pendulum.
-    State vector y = [theta1, omega1, theta2, omega2]
-    """
+    # ... (hàm này không đổi)
     theta1, omega1, theta2, omega2 = y
-    
     delta = theta2 - theta1
-    
     den1 = (M1 + M2) * L1 - M2 * L1 * np.cos(delta) * np.cos(delta)
     num1 = (M2 * L1 * omega1 * omega1 * np.sin(delta) * np.cos(delta) +
             M2 * G * np.sin(theta2) * np.cos(delta) +
             M2 * L2 * omega2 * omega2 * np.sin(delta) -
             (M1 + M2) * G * np.sin(theta1))
-    domega1_dt = num1 / (den1 + 1e-9) # Add epsilon for stability
-
+    domega1_dt = num1 / (den1 + 1e-9)
     den2 = (L2 / L1) * den1
     num2 = (-M2 * L2 * omega2 * omega2 * np.sin(delta) * np.cos(delta) +
             (M1 + M2) * G * np.sin(theta1) * np.cos(delta) -
             (M1 + M2) * L1 * omega1 * omega1 * np.sin(delta) -
             (M1 + M2) * G * np.sin(theta2))
-    domega2_dt = num2 / (den2 + 1e-9) # Add epsilon for stability
-    
+    domega2_dt = num2 / (den2 + 1e-9)
     return [omega1, domega1_dt, omega2, domega2_dt]
 
-def generate_irregular_trajectory():
+def generate_continuous_solution():
     """
-    Generates a single, long, irregularly sampled trajectory.
+    Tạo ra một đối tượng lời giải liên tục cho một quỹ đạo.
     """
-    y0 = [
-        np.pi / 2 + np.random.uniform(-0.1, 0.1),
-        0.0,
-        np.pi + np.random.uniform(-0.1, 0.1),
-        0.0
-    ]
+    y0 = [np.pi / 2 + np.random.uniform(-0.1, 0.1), 0.0, np.pi + np.random.uniform(-0.1, 0.1), 0.0]
     
-    # --- SỬA LỖI Ở ĐÂY ---
-    # Logic tạo time_points đã được sửa để đảm bảo không vượt quá T_MAX
-    time_points = [0.0]
-    current_time = 0.0
-    while current_time < T_MAX:
-        dt = np.random.uniform(MIN_DT, MAX_DT)
-        next_time = current_time + dt
-        if next_time > T_MAX:
-            break  # Thoát vòng lặp nếu điểm tiếp theo vượt quá giới hạn
-        time_points.append(next_time)
-        current_time = next_time
-    
-    t_eval = np.array(time_points)
-    # ---------------------
-    
+    # Chạy solver mà không có t_eval để có được hàm nội suy
     sol = solve_ivp(
         double_pendulum_ode,
         [0, T_MAX],
         y0,
-        t_eval=t_eval,
+        dense_output=True, # Yêu cầu solver trả về hàm nội suy
         method='RK45'
     )
-    
-    return sol.y.T
+    return sol
 
-def create_windows(trajectories: list, seq_len: int) -> tuple[np.ndarray, np.ndarray]:
-    """Create sequence-to-value windows from a list of trajectories."""
+def create_windows_precise(solutions: list, seq_len: int, horizon: float, given_input_times: list = None):
+    """
+    Tạo cửa sổ (X, y) với y là trạng thái tại một thời điểm tương lai CHÍNH XÁC.
+    Có thể nhận một danh sách các input_times đã được tạo trước để đảm bảo tính nhất quán.
+    """
     all_sequences = []
     all_targets = []
     
-    print("Creating sliding windows from trajectories...")
-    for traj in tqdm(trajectories):
-        for i in range(len(traj) - seq_len):
-            sequence = traj[i : i + seq_len]
-            target = traj[i + seq_len]
-            all_sequences.append(sequence)
-            all_targets.append(target)
+    print(f"Creating windows with a PRECISE prediction horizon of {horizon}s...")
+    for sol in tqdm(solutions):
+        # Nếu không có input_times nào được cung cấp, hãy tạo chúng ngẫu nhiên
+        if given_input_times is None:
+            input_times = []
+            current_time = 0.0
+            while current_time < sol.sol.t[-1] - horizon: # Sử dụng sol.sol.t[-1] để lấy T_MAX thực tế
+                dt = np.random.uniform(MIN_DT, MAX_DT)
+                if current_time + dt > sol.sol.t[-1] - horizon:
+                    break
+                current_time += dt
+                input_times.append(current_time)
+        # Ngược lại, sử dụng danh sách đã được cung cấp
+        else:
+            input_times = given_input_times
+
+        # Phần còn lại của hàm không thay đổi
+        for i in range(len(input_times) - seq_len):
+            sequence_times = input_times[i : i + seq_len]
+            last_time_in_sequence = sequence_times[-1]
+            target_time = last_time_in_sequence + horizon
+            
+            sequence_states = sol.sol(sequence_times).T
+            target_state = sol.sol(target_time).T.flatten()
+            
+            all_sequences.append(sequence_states)
+            all_targets.append(target_state)
             
     return np.array(all_sequences, dtype=np.float32), np.array(all_targets, dtype=np.float32)
 
 def pendulum_preprocess_pipeline():
-    """
-    Execute the complete preprocessing pipeline for the double pendulum dataset.
-    """
-    print("--- Starting Double Pendulum Data Generation and Preprocessing ---")
+    print("--- Starting PRECISE Double Pendulum Data Generation ---")
     os.makedirs(PENDULUM_PROCESSED_DIR, exist_ok=True)
 
-    print(f"Generating {NUM_TRAJECTORIES} long, irregular trajectories...")
-    trajectories = [generate_irregular_trajectory() for _ in tqdm(range(NUM_TRAJECTORIES))]
+    print(f"Generating {NUM_TRAJECTORIES} continuous solution objects (this may take a while)...")
+    solutions = [generate_continuous_solution() for _ in tqdm(range(NUM_TRAJECTORIES))]
 
-    X, y = create_windows(trajectories, SEQUENCE_LENGTH)
-    print(f"Successfully created {len(X)} windows.")
+    X, y = create_windows_precise(solutions, SEQUENCE_LENGTH, PREDICTION_HORIZON)
+    
+    print(f"Successfully created {len(X)} precise windows.")
     print(f"Shape of feature matrix X: {X.shape}")
     print(f"Shape of target matrix y: {y.shape}")
 
+    # Phần còn lại của pipeline không thay đổi
     print("Splitting data into training and test sets (80/20)...")
     X_train, X_test, y_train, y_test = train_test_split(
-        X, y, test_size=0.2, random_state=42, shuffle=False # shuffle=False is often better for time series
+        X, y, test_size=0.2, random_state=42, shuffle=True
     )
     print(f"Training set size: X={X_train.shape}, y={y_train.shape}")
     print(f"Test set size: X={X_test.shape}, y={y_test.shape}")
-
-    print("Standardizing data (fitting scaler on training data only)...")
-    X_train_reshaped = X_train.reshape(-1, OUTPUT_DIM)
     
+    print("Standardizing data...")
+    X_train_reshaped = X_train.reshape(-1, OUTPUT_DIM)
     scaler = StandardScaler()
     scaler.fit(X_train_reshaped)
-    
     X_train = scaler.transform(X_train_reshaped).reshape(X_train.shape)
     y_train = scaler.transform(y_train)
-    
     X_test_reshaped = X_test.reshape(-1, OUTPUT_DIM)
     X_test = scaler.transform(X_test_reshaped).reshape(X_test.shape)
     y_test = scaler.transform(y_test)
     
-    print("Standardization completed for both features (X) and targets (y).")
-
+    print("Standardization completed.")
     print(f"Saving processed data to directory: {PENDULUM_PROCESSED_DIR}")
-    
     np.save(PENDULUM_PROCESSED_DIR / 'X_train.npy', X_train)
     np.save(PENDULUM_PROCESSED_DIR / 'y_train.npy', y_train)
     np.save(PENDULUM_PROCESSED_DIR / 'X_test.npy', X_test)
     np.save(PENDULUM_PROCESSED_DIR / 'y_test.npy', y_test)
-    
     joblib.dump(scaler, PENDULUM_PROCESSED_DIR / 'scaler.pkl')
     
-    print("--- Double Pendulum Data Generation Completed Successfully! ---")
+    print("--- PRECISE Double Pendulum Data Generation Completed Successfully! ---")
 
 if __name__ == '__main__':
     pendulum_preprocess_pipeline()
