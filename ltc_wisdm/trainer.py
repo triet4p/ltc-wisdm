@@ -52,8 +52,8 @@ class PyTorchTrainer:
         
         self._epoch: int = 0
         self._history = {
-            "train_loss": [], "train_acc": [],
-            "val_loss": [], "val_acc": [],
+            "train_loss": [],
+            "val_loss": [],
             "lr": []
         }
         

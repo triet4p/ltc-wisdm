@@ -7,14 +7,14 @@ class GRUModel(nn.Module):
     """
     GRU model for sequence classification.
     """
-    def __init__(self, input_dim: int, hidden_dim: int, num_classes: int, num_layers: int = 1, dropout: float = 0.2):
+    def __init__(self, input_dim: int, hidden_dim: int, output_dim: int, num_layers: int = 1, dropout: float = 0.2):
         """
         Initialize GRU architecture.
 
         Args:
             input_dim (int): Number of input features at each time step (number of sensor axes).
             hidden_dim (int): Size of hidden state.
-            num_classes (int): Number of output classes (number of activities).
+            output_dim (int): Number of output classes (number of activities).
             num_layers (int, optional): Number of stacked GRU layers. Defaults to 1.
             dropout (float, optional): Dropout rate between GRU layers (if num_layers > 1). Defaults to 0.2.
         """
@@ -33,7 +33,7 @@ class GRUModel(nn.Module):
         )
 
         # Final fully connected layer for classification.
-        self.fc = nn.Linear(hidden_dim, num_classes)
+        self.fc = nn.Linear(hidden_dim, output_dim)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """
@@ -43,7 +43,7 @@ class GRUModel(nn.Module):
             x (torch.Tensor): Input tensor with shape (batch_size, sequence_length, input_dim).
 
         Returns:
-            torch.Tensor: Output logits with shape (batch_size, num_classes).
+            torch.Tensor: Output logits with shape (batch_size, output_dim).
         """
         # Initialize hidden state with zeros
         # h0 shape: (num_layers, batch_size, hidden_dim)

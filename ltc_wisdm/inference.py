@@ -1,18 +1,17 @@
-# src/inference.py
-
-from sklearn.calibration import label_binarize
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
 import numpy as np
-from sklearn.metrics import confusion_matrix, accuracy_score, f1_score, roc_auc_score
 import seaborn as sns
 import matplotlib.pyplot as plt
 from typing import Callable, Dict, Any, List
 
 class PyTorchInferencer:
     """
-    A reusable Inferencer class for evaluating PyTorch models.
+    A reusable, task-agnostic Inferencer for evaluating PyTorch models.
+    
+    It predicts raw outputs and uses a flexible dictionary of metric functions
+    to evaluate performance for either classification or regression tasks.
     """
     def __init__(self, model: nn.Module, device: torch.device = None):
         """
@@ -20,7 +19,7 @@ class PyTorchInferencer:
 
         Args:
             model (nn.Module): Trained PyTorch model.
-            device (torch.device, optional): Device to run inference on. Automatically detected if None.
+            device (torch.device, optional): Device to run inference on.
         """
         self.model = model
         self.device = device if device else torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -30,7 +29,7 @@ class PyTorchInferencer:
 
     def predict(self, data_loader: DataLoader) -> tuple[np.ndarray, np.ndarray]:
         """
-        Get predictions (logits) and true labels from DataLoader.
+        Get raw model predictions and true labels from a DataLoader.
 
         Args:
             data_loader (DataLoader): DataLoader containing data to predict.
@@ -56,60 +55,28 @@ class PyTorchInferencer:
     def evaluate(
         self, 
         data_loader: DataLoader, 
-        label_metrics_dict: Dict[str, Callable] = None,
-        prob_metrics_dict: Dict[str, Callable] = None
+        metrics_dict: Dict[str, Callable]
     ) -> Dict[str, Any]:
         """
-        Main API for comprehensive model evaluation.
+        Main API for model evaluation, adaptable for any task.
 
         Args:
-            data_loader (DataLoader): DataLoader containing the evaluation data.
-            label_metrics_dict (Dict[str, Callable], optional): 
-                Dictionary of metrics that operate on predicted class labels (e.g., accuracy, f1_score).
-                The functions should accept (y_true, y_pred).
-            prob_metrics_dict (Dict[str, Callable], optional): 
-                Dictionary of metrics that operate on class probabilities (e.g., roc_auc_score).
-                The functions should accept (y_true_binarized, y_pred_proba).
+            data_loader (DataLoader): DataLoader for evaluation.
+            metrics_dict (Dict[str, Callable]): Dictionary of metric functions.
+                Each function should accept (y_true, y_preds_raw) and compute a score.
 
         Returns:
-            Dict[str, Any]: A dictionary containing metric results and the confusion matrix.
+            Dict[str, Any]: A dictionary containing the results of each metric.
         """
-        label_metrics_dict = label_metrics_dict or {}
-        prob_metrics_dict = prob_metrics_dict or {}
-        
         y_preds_raw, y_true = self.predict(data_loader)
-        y_pred_classes = np.argmax(y_preds_raw, axis=1)
         
         report = {}
         
-        # --- Calculate label-based metrics ---
-        for metric_name, metric_func in label_metrics_dict.items():
+        for metric_name, metric_func in metrics_dict.items():
             try:
-                report[metric_name] = metric_func(y_true, y_pred_classes)
+                report[metric_name] = metric_func(y_true, y_preds_raw)
             except Exception as e:
-                print(f"Error calculating label metric '{metric_name}': {e}")
-        
-        # --- Calculate probability-based metrics ---
-        if prob_metrics_dict:
-            # This part only runs if needed
-            num_classes = y_preds_raw.shape[1]
-            y_true_binarized = label_binarize(y_true, classes=range(num_classes))
-            y_pred_proba = torch.softmax(torch.tensor(y_preds_raw), dim=1).numpy()
-            
-            for metric_name, metric_func in prob_metrics_dict.items():
-                try:
-                    # For multi-class ROC AUC, ensure y_true_binarized has same shape as y_pred_proba
-                    # This handles the binary case where label_binarize might return a 1D array
-                    if y_true_binarized.shape[1] == 1 and num_classes > 2:
-                         y_true_binarized = label_binarize(y_true, classes=range(num_classes))
-
-                    report[metric_name] = metric_func(y_true_binarized, y_pred_proba)
-                except Exception as e:
-                    print(f"Error calculating probability metric '{metric_name}': {e}")
-        
-        # Always calculate confusion matrix
-        cm = confusion_matrix(y_true, y_pred_classes)
-        report['confusion_matrix'] = cm
+                print(f"Error calculating metric '{metric_name}': {e}")
         
         return report
 
@@ -120,7 +87,10 @@ class PyTorchInferencer:
         title: str = 'Confusion Matrix',
         figsize: tuple = (10, 8)
     ):
-        """Plot confusion matrix in a nice way."""
+        """
+        Plots a confusion matrix using seaborn. 
+        Suitable for classification tasks.
+        """
         plt.figure(figsize=figsize)
         sns.heatmap(
             cm,
@@ -133,4 +103,37 @@ class PyTorchInferencer:
         plt.title(title)
         plt.ylabel('True Label')
         plt.xlabel('Predicted Label')
+        plt.show()
+
+    def plot_predictions(
+        self,
+        y_true: np.ndarray,
+        y_pred: np.ndarray,
+        feature_index: int = 0,
+        title: str = 'True vs. Predicted Values',
+        figsize: tuple = (15, 6)
+    ):
+        """
+        Plots true vs. predicted values for a specific feature over time.
+        Suitable for regression and time-series forecasting tasks.
+
+        Args:
+            y_true (np.ndarray): Ground truth values.
+            y_pred (np.ndarray): Predicted values.
+            feature_index (int): The index of the feature dimension to plot.
+            title (str): Title of the plot.
+            figsize (tuple): Figure size.
+        """
+        plt.figure(figsize=figsize)
+        # Ensure we are plotting 1D arrays
+        true_values = y_true[:, feature_index] if y_true.ndim > 1 else y_true
+        pred_values = y_pred[:, feature_index] if y_pred.ndim > 1 else y_pred
+        
+        plt.plot(true_values, label='True Value', color='blue', alpha=0.7)
+        plt.plot(pred_values, label='Predicted Value', color='red', linestyle='--')
+        plt.title(f'{title} (Feature {feature_index})')
+        plt.xlabel('Time Step / Sample Index')
+        plt.ylabel('Value')
+        plt.legend()
+        plt.grid(True)
         plt.show()

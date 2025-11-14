@@ -98,7 +98,7 @@ class LTCModel(nn.Module):
     This model uses an ODE solver (`torchdiffeq`) to process sequences step-by-step.
     """
     def __init__(self, input_dim: int, hidden_dim: int, 
-                 num_classes: int, 
+                 output_dim: int, 
                  solver: str = 'rk4', 
                  use_adjoint: bool = False,
                  debug: bool = True):
@@ -108,16 +108,16 @@ class LTCModel(nn.Module):
         Args:
             input_dim (int): Number of input features at each time step.
             hidden_dim (int): The size of the hidden state.
-            num_classes (int): Number of output classes.
+            output_dim (int): Number of output classes.
             solver (str, optional): The ODE solver to use (e.g., 'euler', 'rk4'). Defaults to 'rk4'.
             use_adjoint (bool, optional): Whether to use the memory-efficient adjoint method for backpropagation. Defaults to False.
         """
         super(LTCModel, self).__init__()
         self.hidden_dim = hidden_dim
-        self.num_classes = num_classes
+        self.output_dim = output_dim
         
         self.cell = LTCCell(input_dim, hidden_dim)
-        self.fc = nn.Linear(hidden_dim, num_classes)
+        self.fc = nn.Linear(hidden_dim, output_dim)
         
         self.solver = solver
         self.odeint_fn = odeint
@@ -135,7 +135,7 @@ class LTCModel(nn.Module):
             x (torch.Tensor): Input tensor of shape (batch_size, sequence_length, input_dim).
 
         Returns:
-            torch.Tensor: Output logits of shape (batch_size, num_classes).
+            torch.Tensor: Output logits of shape (batch_size, output_dim).
         """
         batch_size, seq_len, _ = x.shape
         h = torch.zeros(batch_size, self.hidden_dim, device=x.device)
