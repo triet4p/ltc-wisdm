@@ -201,7 +201,7 @@ class PyTorchTrainer:
 
             # Log results to console
             log_str = (
-                f"Epoch {epoch}/{num_epochs + last_epoch + 1} | Time: {epoch_time:.2f}s | "
+                f"Epoch {epoch}/{num_epochs + last_epoch} | Time: {epoch_time:.2f}s | "
                 f"Train Loss: {train_results['loss']:.4f} | Val Loss: {val_results['loss']:.4f}"
             )
             for name in self.metrics.keys():
