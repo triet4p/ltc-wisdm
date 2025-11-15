@@ -146,14 +146,20 @@ class PyTorchTrainer:
         torch.save(state, checkpoint_path)
         print(f"Checkpoint saved at: {checkpoint_path}")
 
-    def load_model(self, checkpoint_path: str, model: nn.Module):
+    def load_checkpoint(self, checkpoint_path: str):
         """Load model state_dict from a checkpoint file."""
         if not os.path.exists(checkpoint_path):
             raise FileNotFoundError(f"Checkpoint file not found: {checkpoint_path}")
         
         checkpoint = torch.load(checkpoint_path, map_location=self.device)
-        model.load_state_dict(checkpoint['model_state_dict'])
-        model.to(self.device)
+        self.model.load_state_dict(checkpoint['model_state_dict'])
+        self.model.to(self.device)
+        self.optimizer.load_state_dict(checkpoint['optimizer_state_dict'])
+        if 'scheduler_state_dict' in checkpoint:
+            self.lr_scheduler.load_state_dict(checkpoint['scheduler_state_dict'])
+        
+        self._epoch = checkpoint["epoch"]
+        self._history = checkpoint["history"]
         print(f"Model weights loaded from checkpoint: {checkpoint_path}")
 
 
@@ -169,7 +175,9 @@ class PyTorchTrainer:
         best_val_loss = float('inf')
 
         print(f"Starting training for {num_epochs} epochs...")
-        for epoch in range(1, num_epochs + 1):
+        last_epoch = self._epoch
+        for epoch in range(last_epoch + 1, num_epochs + last_epoch + 1):
+            self._epoch = epoch
             start_time = time.time()
             
             train_results = self._run_epoch(train_loader, is_training=True)
@@ -193,7 +201,7 @@ class PyTorchTrainer:
 
             # Log results to console
             log_str = (
-                f"Epoch {epoch}/{num_epochs} | Time: {epoch_time:.2f}s | "
+                f"Epoch {epoch}/{num_epochs + last_epoch + 1} | Time: {epoch_time:.2f}s | "
                 f"Train Loss: {train_results['loss']:.4f} | Val Loss: {val_results['loss']:.4f}"
             )
             for name in self.metrics.keys():
@@ -217,6 +225,6 @@ class PyTorchTrainer:
 
         if reload_best_checkpoint and self.best_checkpoint_path:
             print("Loading weights from best checkpoint...")
-            self.load_model(self.best_checkpoint_path, self.model)
+            self.load_checkpoint(self.best_checkpoint_path)
             
         return self._history
